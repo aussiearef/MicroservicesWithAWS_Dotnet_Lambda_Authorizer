@@ -45,7 +45,25 @@ public class Authorizer
 
         if (!result.IsValid) throw new UnauthorizedAccessException("Token not valid");
 
+        var apiGroupMapping = new Dictionary<string, string>()
+        {
+            {"listadminshotel+", "Admin"},
+            {"admin+", "Admin"}
+        };
 
+        var expectdGroup = apiGroupMapping.FirstOrDefault(x =>
+            request.Path.Contains(x.Key, StringComparison.InvariantCultureIgnoreCase));
+
+        if (!expectdGroup.Equals(default(KeyValuePair<string, string>)))
+        {
+            var userGroup = idTokenDetails.Claims.First(x => x.Type == "cognito:groups").Value;
+            if (string.Compare(userGroup , expectdGroup.Value, 
+                    StringComparison.InvariantCultureIgnoreCase) != 0)
+            {
+                // user is not authorised.
+            }
+        }
+        
         return respone;
     }
 }
