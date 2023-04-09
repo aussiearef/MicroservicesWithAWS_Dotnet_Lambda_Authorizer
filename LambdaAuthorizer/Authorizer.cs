@@ -1,9 +1,12 @@
 ﻿using System.IdentityModel.Tokens.Jwt;
 using System.Text.Json;
 using Amazon.Lambda.APIGatewayEvents;
+using Amazon.Lambda.Core;
 using Amazon.SecretsManager;
 using Amazon.SecretsManager.Model;
 using Microsoft.IdentityModel.Tokens;
+
+[assembly:LambdaSerializer(typeof(Amazon.Lambda.Serialization.Json.JsonSerializer))]
 
 namespace LambdaAuthorizer;
 
@@ -11,14 +14,35 @@ public class Authorizer
 {
     public async Task<APIGatewayCustomAuthorizerResponse> Auth(APIGatewayCustomAuthorizerRequest request)
     {
-        var respone = new APIGatewayCustomAuthorizerResponse();
-
-        var idToken = request.AuthorizationToken;
+        
+        
+        var idToken = request.QueryStringParameters["token"];
+        Console.WriteLine($"Token is {idToken}");
         var idTokenDetails = new JwtSecurityToken(idToken);
 
         var kid = idTokenDetails.Header["kid"].ToString();
         var issuer = idTokenDetails.Claims.First(x => x.Type == "iss").Value;
         var audience = idTokenDetails.Claims.First(x => x.Type == "aud").Value;
+        var userId = idTokenDetails.Claims.First(x => x.Type == "sub").Value;
+        
+        var response = new APIGatewayCustomAuthorizerResponse()
+        {
+            PrincipalID = userId,
+            PolicyDocument = new APIGatewayCustomAuthorizerPolicy()
+            {
+                Version = "2012-10-17",
+                Statement = new List<APIGatewayCustomAuthorizerPolicy.IAMPolicyStatement>()
+                {
+                    new APIGatewayCustomAuthorizerPolicy.IAMPolicyStatement()
+                    {
+                        Action = new HashSet<string>(){"execute-api:Invoke"},
+                        Effect = "Allow",
+                        Resource = new HashSet<string>(){request.MethodArn}
+                    }
+                }
+            }
+        };
+        
 
         var secretsClient = new AmazonSecretsManagerClient();
         var secret = await secretsClient.GetSecretValueAsync(new GetSecretValueRequest
@@ -28,11 +52,13 @@ public class Authorizer
 
         var privateKeys = secret.SecretString;
 
-        var jwks = JsonSerializer.Deserialize<JsonWebKeySet>(privateKeys, new JsonSerializerOptions
+        Console.WriteLine($"JWKS set: {privateKeys}");
+        var jwks = new JsonWebKeySet(privateKeys);
+        
+        foreach (var key in jwks.Keys)
         {
-            PropertyNameCaseInsensitive = true
-        });
-
+            Console.WriteLine(key.Kid);
+        }
         var privateKey = jwks.Keys.First(x => x.Kid == kid);
 
         var handler = new JwtSecurityTokenHandler();
@@ -60,10 +86,10 @@ public class Authorizer
             if (string.Compare(userGroup , expectdGroup.Value, 
                     StringComparison.InvariantCultureIgnoreCase) != 0)
             {
-                // user is not authorised.
+                response.PolicyDocument.Statement[0].Effect = "Deny";
             }
         }
         
-        return respone;
+        return response;
     }
 }
